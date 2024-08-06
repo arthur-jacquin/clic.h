@@ -154,6 +154,11 @@ static void clic_check_param_or_arg_declaration(int subcommand_id,
 static void clic_check_subcommmand_declaration(int subcommand_id,
     const char *subcommand_name, int should_be_declared);
 static void clic_fail(const char *error_message);
+static int clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg,
+    const char *arg1, const char *arg2);
+static void clic_print_help(struct clic_scope scope);
+static void clic_print_options(void);
+static void clic_print_synopsis(void);
 
 static struct {
     int is_init, is_parsed;
@@ -296,7 +301,84 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
 
     clic_check_initialized_and_not_parsed();
     clic_globals.is_parsed = 1;
-    // TODO
+
+#if defined(CLIC_DUMP_SYNOPSIS)
+    clic_print_synopsis();
+#elif defined(CLIC_DUMP_OPTIONS)
+    clic_print_options();
+#else
+    const char *s, *name;
+    int found;
+    struct clic_scope active_scope = clic_globals.main_scope;
+
+    // detect subcommand
+    if (argc > 1) {
+        clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
+            if (strcmp(argv[1], scope->subcommand_name))
+                continue;
+            active_scope = *scope;
+            nb_processed_arguments++;
+            break;
+        }
+    }
+    *subcommand_id = active_scope.subcommand_id;
+
+    // eat parameters
+    while ((s = argv[1 + nb_processed_arguments])) {
+        if (!strcmp(s, "--")) {
+            nb_processed_arguments++;
+            break;
+        }
+        if (s[0] == '-' && isalpha(s[1]) && strlen(s) == 2) {
+            name = s + 1;
+        } else if (!strncmp(s, "--no-", 5)) {
+            name = s + 5;
+        } else if (!strncmp(s, "--", 2)) {
+            name = s + 2;
+        } else {
+            // not a parameter
+            break;
+        }
+        found = 0;
+        clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
+            if (active_scope.subcommand_id != param->subcommand_id ||
+                strcmp(name, param->name))
+                continue;
+            nb_processed_arguments += clic_parse_param_or_arg(*param, s,
+                argv[1 + nb_processed_arguments + 1]);
+            found = 1;
+            break;
+        }
+        if (!found) {
+            // TODO: also handle configuration files (--conf FILE) ?
+            if (!strcmp(s, "--help")) {
+                clic_print_help(active_scope);
+            } else if (!strcmp(s, "--version") &&
+                clic_globals.metadata.version) {
+                printf("%s\n", clic_globals.metadata.version);
+                exit(EXIT_SUCCESS);
+            } else {
+                // TODO: problem ("parameter not recognised: %s", name)
+            }
+        }
+    }
+
+    // eat named arguments
+    clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
+        if (active_scope.subcommand_id != arg->subcommand_id ||
+            !arg->is_required)
+            continue;
+        if (!(s = argv[1 + nb_processed_arguments])) {
+            // TODO: problem ("missing required argument %s", arg->name)
+        }
+        nb_processed_arguments += clic_parse_param_or_arg(*arg, s, NULL);
+    }
+
+    // check if there are unnamed arguments
+    if (!active_scope.accept_unnamed_arguments &&
+        1 + nb_processed_arguments < argc) {
+        // TODO: problem ("too many arguments")
+    }
 
     // cleanup
     clic_list_safe_for(clic_globals.flag_names, p, clic_flag_name)
@@ -307,6 +389,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
         free(p);
     clic_list_safe_for(clic_globals.subcommand_scopes, p, clic_scope)
         free(p);
+#endif // CLIC_DUMP_*
 
     return nb_processed_arguments;
 }
@@ -413,11 +496,42 @@ clic_check_subcommmand_declaration(int subcommand_id,
     }
 }
 
+static int
+clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, const char *arg1,
+    const char *arg2)
+{
+    // arg1 and arg2 are command line arguments
+    // returns the number of them used to parse param_or_arg
+    // TODO: check type correctness, correct value, store in variable
+    return 0;
+}
+
 static void
 clic_fail(const char *error_message)
 {
     perror(error_message);
     exit(EXIT_FAILURE);
+}
+
+static void
+clic_print_help(struct clic_scope scope)
+{
+    // TODO
+    exit(EXIT_SUCCESS);
+}
+
+static void
+clic_print_options(void)
+{
+    // TODO
+    exit(EXIT_SUCCESS);
+}
+
+static void
+clic_print_synopsis(void)
+{
+    // TODO
+    exit(EXIT_SUCCESS);
 }
 
 #endif // CLIC_IMPL
