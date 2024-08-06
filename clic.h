@@ -73,13 +73,14 @@ void clic_add_param_bool(int subcommand_id, const char *name,
 void clic_add_param_int(int subcommand_id, const char *name,
     const char *description, int default_value, int *variable);
 void clic_add_param_string(int subcommand_id, const char *name,
-    const char *description, const char *default_value, char **variable,
+    const char *description, const char *default_value, const char **variable,
     int restrict_to_declared_options);
 
 void clic_add_arg_int(int subcommand_id, const char *name,
     const char *description, int *variable);
 void clic_add_arg_string(int subcommand_id, const char *name,
-    const char *description, char **variable, int restrict_to_declared_options);
+    const char *description, const char **variable,
+    int restrict_to_declared_options);
 
 void clic_add_string_option(int subcommand_id, const char *param_or_arg_name,
     const char *value);
@@ -127,8 +128,7 @@ struct clic_param_or_arg {
     int is_required;
     // inconsistent fields (defined for some types only)
     int scalar_default_value, *scalar_variable, mask;
-    const char *string_default_value;
-    char **string_variable;
+    const char *string_default_value, **string_variable;
     int restrict_to_declared_options;
 };
 struct clic_scope {
@@ -218,6 +218,7 @@ clic_add_param_flag(int subcommand_id, char name, const char *description,
             .scalar_variable = variable,
             .mask = mask,
         });
+    *variable = mask ? (*variable & ~mask) : 0;
 }
 
 void
@@ -230,6 +231,9 @@ clic_add_param_bool(int subcommand_id, const char *name,
             .scalar_variable = variable,
             .mask = mask,
         });
+    *variable = default_value ?
+        (mask ? (*variable | mask) : 1) :
+        (mask ? (*variable & ~mask) : 0);
 }
 
 void
@@ -241,11 +245,12 @@ clic_add_param_int(int subcommand_id, const char *name, const char *description,
             .scalar_default_value = default_value,
             .scalar_variable = variable,
         });
+    *variable = default_value;
 }
 
 void
 clic_add_param_string(int subcommand_id, const char *name,
-    const char *description, const char *default_value, char **variable,
+    const char *description, const char *default_value, const char **variable,
     int restrict_to_declared_options)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_STRING, 0,
@@ -254,6 +259,7 @@ clic_add_param_string(int subcommand_id, const char *name,
             .string_variable = variable,
             .restrict_to_declared_options = restrict_to_declared_options,
         });
+    *variable = default_value;
 }
 
 void
@@ -268,7 +274,8 @@ clic_add_arg_int(int subcommand_id, const char *name, const char *description,
 
 void
 clic_add_arg_string(int subcommand_id, const char *name,
-    const char *description, char **variable, int restrict_to_declared_options)
+    const char *description, const char **variable,
+    int restrict_to_declared_options)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_STRING, 1,
         (struct clic_param_or_arg) {
