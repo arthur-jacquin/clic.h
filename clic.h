@@ -98,6 +98,19 @@ int clic_parse(int argc, const char *argv[], int *subcommand_id);
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef CLIC_PADDING_1
+#define CLIC_PADDING_1          2
+#endif
+#ifndef CLIC_PADDING_2
+#define CLIC_PADDING_2          20
+#endif
+#ifndef CLIC_PADDING_3
+#define CLIC_PADDING_3          10
+#endif
+#ifndef CLIC_PADDING_4
+#define CLIC_PADDING_4          4
+#endif
+
 #define set_flag_bool(curr, val, mask) \
     ((curr) = (mask) ? ((val) ? ((curr) | (mask)) : ((curr) & ~(mask))) : (val))
 
@@ -161,6 +174,7 @@ static void clic_fail(const char *error_message, ...);
 static int clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg,
     int is_required, const char *arg1, const char *arg2);
 static void clic_print_help(struct clic_scope scope);
+static void clic_print_help_param_or_arg(struct clic_param_or_arg param_or_arg);
 static void clic_print_options(void);
 static void clic_print_synopsis(void);
 
@@ -319,6 +333,9 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
 
     clic_check_initialized_and_not_parsed();
     clic_globals.is_parsed = 1;
+    if (!clic_globals.main_scope.subcommand_name) {
+        clic_globals.main_scope.subcommand_name = argv[0];
+    }
 
 #if defined(CLIC_DUMP_SYNOPSIS)
     clic_print_synopsis();
@@ -609,8 +626,143 @@ clic_fail(const char *error_message, ...)
 static void
 clic_print_help(struct clic_scope scope)
 {
-    // TODO
+    const char *program_name, *s;
+    int arg_found = 0, param_found = 0;
+
+    // metadata
+    printf("%s", program_name = clic_globals.main_scope.subcommand_name);
+    if ((s = clic_globals.metadata.version)) printf(" %s", s);
+    if ((s = clic_globals.metadata.license)) printf(" (license: %s)", s);
+    printf("\n");
+    if ((s = clic_globals.main_scope.description)) printf("%s\n", s);
+
+    // usage
+    printf("\nUSAGE\n");
+    printf("%*s%s", CLIC_PADDING_1, "", program_name);
+    if (scope.subcommand_id) printf(" %s", scope.subcommand_name);
+    clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
+        if (scope.subcommand_id != param->subcommand_id || param->is_required)
+            continue;
+        param_found = 1;
+        printf(" [OPTIONS]");
+        break;
+    }
+    clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
+        if (scope.subcommand_id != arg->subcommand_id || !arg->is_required)
+            continue;
+        arg_found = 1;
+        printf(" %s", arg->name);
+    }
+    if (scope.accept_unnamed_arguments) printf(" [ARGUMENTS]");
+    printf("\n");
+
+    // subcommands, named arguments, parameters
+    if (!scope.subcommand_id && clic_globals.subcommand_scopes.start) {
+        printf("%*s%s SUBCOMMAND ... (see %s SUBCOMMAND --help)\n",
+            CLIC_PADDING_1, "", program_name, program_name);
+        printf("\nSUBCOMMANDS\n");
+        clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
+            printf("%*s%-*s", CLIC_PADDING_1, "", CLIC_PADDING_2,
+                s = scope->subcommand_name);
+            if (scope->description) {
+                if (strlen(s) >= CLIC_PADDING_2)
+                    printf("\n%*s", CLIC_PADDING_1 + CLIC_PADDING_2, "");
+                printf("%s", scope->description);
+            }
+            printf("\n");
+        }
+    }
+    if (arg_found) {
+        printf("\nNAMED ARGUMENTS\n");
+        clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
+            if (scope.subcommand_id != arg->subcommand_id || !arg->is_required)
+                continue;
+            clic_print_help_param_or_arg(*arg);
+        }
+    }
+    if (param_found) {
+        printf("\nOPTIONS\n");
+        clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
+            if (scope.subcommand_id != param->subcommand_id ||
+                param->is_required)
+            continue;
+            clic_print_help_param_or_arg(*param);
+        }
+    }
+
     exit(EXIT_SUCCESS);
+}
+
+static void
+clic_print_help_param_or_arg(struct clic_param_or_arg param_or_arg)
+{
+    const char *s;
+    enum clic_type type;
+    int nb;
+
+    // syntax
+    printf("%*s", CLIC_PADDING_1, "");
+    s = param_or_arg.name;
+    nb = 0;
+    switch (type = param_or_arg.type) {
+    case CLIC_FLAG:
+        nb += printf("-%s", s);
+        break;
+    case CLIC_BOOL:
+        nb += printf("--%s, --no-%s", s, s);
+        break;
+    case CLIC_INT:
+    case CLIC_STRING:
+        nb += printf(param_or_arg.is_required ? "%s" : "--%s value", s);
+        break;
+    }
+
+    // type and description
+    if (nb >= CLIC_PADDING_2) {
+        printf("\n%*s", CLIC_PADDING_1 + CLIC_PADDING_2, "");
+    } else {
+        printf("%*s", CLIC_PADDING_2 - nb, "");
+    }
+    printf("%-*s", CLIC_PADDING_3,
+        type == CLIC_FLAG ? "flag" :
+        type == CLIC_BOOL ? "boolean" :
+        type == CLIC_INT ? "integer" :
+        "string");
+    if ((s = param_or_arg.description)) printf("%s", s);
+    printf("\n");
+
+    // acceptable and default values
+    if (type == CLIC_STRING && param_or_arg.restrict_to_declared_options) {
+        printf("%*soptions: ", CLIC_PADDING_1 + CLIC_PADDING_4, "");
+        nb = 0;
+        clic_list_for(clic_globals.string_options, string_option,
+            clic_string_option) {
+            if (param_or_arg.subcommand_id != string_option->subcommand_id ||
+                strcmp(param_or_arg.name, string_option->param_or_arg_name))
+                continue;
+            printf("%s%s", nb ? ", ": "", string_option->value);
+            nb++;
+        }
+        printf("\n");
+    }
+    if (!param_or_arg.is_required && type != CLIC_FLAG) {
+        printf("%*sdefault: ", CLIC_PADDING_1 + CLIC_PADDING_4, "");
+        switch (type) {
+        case CLIC_FLAG: // unreachable
+            break;
+        case CLIC_BOOL:
+            printf("--%s%s", param_or_arg.scalar_default_value ? "" : "no-",
+                param_or_arg.name);
+            break;
+        case CLIC_INT:
+            printf("%d", param_or_arg.scalar_default_value);
+            break;
+        case CLIC_STRING:
+            printf("%s", param_or_arg.string_default_value);
+            break;
+        }
+        printf("\n");
+    }
 }
 
 static void
