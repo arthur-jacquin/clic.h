@@ -97,6 +97,9 @@ int clic_parse(int argc, const char *argv[], int *subcommand_id);
 #include <stdlib.h>
 #include <string.h>
 
+#define set_flag_bool(curr, val, mask) \
+    ((curr) = (mask) ? ((val) ? ((curr) | (mask)) : ((curr) & ~(mask))) : (val))
+
 struct clic_elem {
     struct clic_elem *next;
 };
@@ -155,7 +158,7 @@ static void clic_check_subcommmand_declaration(int subcommand_id,
     const char *subcommand_name, int should_be_declared);
 static void clic_fail(const char *error_message);
 static int clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg,
-    const char *arg1, const char *arg2);
+    int is_required, const char *arg1, const char *arg2);
 static void clic_print_help(struct clic_scope scope);
 static void clic_print_options(void);
 static void clic_print_synopsis(void);
@@ -218,7 +221,7 @@ clic_add_param_flag(int subcommand_id, char name, const char *description,
             .scalar_variable = variable,
             .mask = mask,
         });
-    *variable = mask ? (*variable & ~mask) : 0;
+    set_flag_bool(*variable, 0, mask);
 }
 
 void
@@ -231,9 +234,7 @@ clic_add_param_bool(int subcommand_id, const char *name,
             .scalar_variable = variable,
             .mask = mask,
         });
-    *variable = default_value ?
-        (mask ? (*variable | mask) : 1) :
-        (mask ? (*variable & ~mask) : 0);
+    set_flag_bool(*variable, default_value, mask);
 }
 
 void
@@ -351,7 +352,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
             if (active_scope.subcommand_id != param->subcommand_id ||
                 strcmp(name, param->name))
                 continue;
-            nb_processed_arguments += clic_parse_param_or_arg(*param, s,
+            nb_processed_arguments += clic_parse_param_or_arg(*param, 0, s,
                 argv[1 + nb_processed_arguments + 1]);
             found = 1;
             break;
@@ -378,7 +379,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
         if (!(s = argv[1 + nb_processed_arguments])) {
             // TODO: problem ("missing required argument %s", arg->name)
         }
-        nb_processed_arguments += clic_parse_param_or_arg(*arg, s, NULL);
+        nb_processed_arguments += clic_parse_param_or_arg(*arg, 1, s, NULL);
     }
 
     // check if there are unnamed arguments
@@ -504,12 +505,64 @@ clic_check_subcommmand_declaration(int subcommand_id,
 }
 
 static int
-clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, const char *arg1,
-    const char *arg2)
+clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
+    const char *arg1, const char *arg2)
 {
     // arg1 and arg2 are command line arguments
     // returns the number of them used to parse param_or_arg
-    // TODO: check type correctness, correct value, store in variable
+    // check type correctness, value correctness, store in variable
+
+    const char *s = is_required ? arg1 : arg2;
+    int found;
+
+    switch (param_or_arg.type) {
+    case CLIC_FLAG:
+        if (arg1[1] == '-') {
+            // TODO: problem (bad syntax to set flag)
+        }
+        set_flag_bool(*param_or_arg.scalar_variable, 1, param_or_arg.mask);
+        return 1;
+    case CLIC_BOOL:
+        if (strncmp(arg1, "--", 2)) {
+            // TODO: problem (bad syntax to set bool)
+        }
+        set_flag_bool(*param_or_arg.scalar_variable, strncmp(arg1, "--no-", 5),
+            param_or_arg.mask);
+        return 1;
+
+    case CLIC_INT:
+        if (!is_required && (strncmp(arg1, "--", 2) ||
+            !strncmp(arg1, "--no-", 5))) {
+            // TODO: problem (bad syntax to set int)
+        } else if (atoi(s) == 0 && strcmp(s, "0")) {
+            // TODO: problem (expected an integer)
+        }
+        *param_or_arg.scalar_variable = atoi(s);
+        return is_required ? 1 : 2;
+    case CLIC_STRING:
+        if (!is_required && (strncmp(arg1, "--", 2) ||
+            !strncmp(arg1, "--no-", 5))) {
+            // TODO: problem (bad syntax to set string)
+        } else if (param_or_arg.restrict_to_declared_options) {
+            found = 0;
+            clic_list_for(clic_globals.string_options, string_option,
+                clic_string_option) {
+                if (param_or_arg.subcommand_id !=
+                        string_option->subcommand_id ||
+                    strcmp(param_or_arg.name,
+                        string_option->param_or_arg_name) ||
+                    strcmp(s, string_option->value))
+                    continue;
+                found = 1;
+                break;
+            }
+            if (!found) {
+                // TODO: problem (not an acceptable value)
+            }
+        }
+        *param_or_arg.string_variable = s;
+        return is_required ? 1 : 2;
+    }
     return 0;
 }
 
