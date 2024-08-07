@@ -535,40 +535,44 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
         set_flag_bool(*param_or_arg.scalar_variable, strncmp(arg1, "--no-", 5),
             param_or_arg.mask);
         return 1;
-
     case CLIC_INT:
-        if (!is_required && (strncmp(arg1, "--", 2) ||
-            !strncmp(arg1, "--no-", 5))) {
-            clic_fail("bad syntax to set integer '%s'", param_or_arg.name);
-        } else if (atoi(s) == 0 && strcmp(s, "0")) {
-            clic_fail("expected an integer (%s), got '%s'", param_or_arg.name,
-                s);
-        }
-        *param_or_arg.scalar_variable = atoi(s);
-        return is_required ? 1 : 2;
     case CLIC_STRING:
-        if (!is_required && (strncmp(arg1, "--", 2) ||
+        if (!is_required && !arg2) {
+            clic_fail("missing required value for parameter '%s'",
+                param_or_arg.name);
+        } else if (!is_required && (strncmp(arg1, "--", 2) ||
             !strncmp(arg1, "--no-", 5))) {
-            clic_fail("bad syntax to set string '%s'", param_or_arg.name);
-        } else if (param_or_arg.restrict_to_declared_options) {
-            found = 0;
-            clic_list_for(clic_globals.string_options, string_option,
-                clic_string_option) {
-                if (param_or_arg.subcommand_id !=
-                        string_option->subcommand_id ||
-                    strcmp(param_or_arg.name,
-                        string_option->param_or_arg_name) ||
-                    strcmp(s, string_option->value))
-                    continue;
-                found = 1;
-                break;
-            }
-            if (!found) {
-                clic_fail("'%s' is not an acceptable value for %s", s,
-                    param_or_arg.name);
-            }
+            clic_fail("bad syntax to set %s '%s'",
+                param_or_arg.type == CLIC_INT ? "integer" : "string",
+                param_or_arg.name);
         }
-        *param_or_arg.string_variable = s;
+        if (param_or_arg.type == CLIC_INT) {
+            if (atoi(s) == 0 && strcmp(s, "0")) {
+                clic_fail("expected an integer (%s), got '%s'",
+                    param_or_arg.name, s);
+            }
+            *param_or_arg.scalar_variable = atoi(s);
+        } else {
+            if (param_or_arg.restrict_to_declared_options) {
+                found = 0;
+                clic_list_for(clic_globals.string_options, string_option,
+                    clic_string_option) {
+                    if (param_or_arg.subcommand_id !=
+                            string_option->subcommand_id ||
+                        strcmp(param_or_arg.name,
+                            string_option->param_or_arg_name) ||
+                        strcmp(s, string_option->value))
+                        continue;
+                    found = 1;
+                    break;
+                }
+                if (!found) {
+                    clic_fail("'%s' is not an acceptable value for %s", s,
+                        param_or_arg.name);
+                }
+            }
+            *param_or_arg.string_variable = s;
+        }
         return is_required ? 1 : 2;
     }
     return 0;
