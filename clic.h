@@ -93,6 +93,7 @@ int clic_parse(int argc, const char *argv[], int *subcommand_id);
 #ifdef CLIC_IMPL
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -156,7 +157,7 @@ static void clic_check_param_or_arg_declaration(int subcommand_id,
     const char *param_or_arg_name, int should_be_declared);
 static void clic_check_subcommmand_declaration(int subcommand_id,
     const char *subcommand_name, int should_be_declared);
-static void clic_fail(const char *error_message);
+static void clic_fail(const char *error_message, ...);
 static int clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg,
     int is_required, const char *arg1, const char *arg2);
 static void clic_print_help(struct clic_scope scope);
@@ -290,6 +291,7 @@ clic_add_string_option(int subcommand_id, const char *param_or_arg_name,
     const char *value)
 {
     clic_check_initialized_and_not_parsed();
+    clic_check_name_correctness(param_or_arg_name);
     clic_check_subcommmand_declaration(subcommand_id, NULL, 1);
     clic_check_param_or_arg_declaration(subcommand_id, param_or_arg_name, 1);
     struct clic_string_option *string_option = malloc(sizeof(*string_option));
@@ -337,7 +339,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
             nb_processed_arguments++;
             break;
         }
-        if (s[0] == '-' && isalpha(s[1]) && strlen(s) == 2) {
+        if (s[0] == '-' && isalpha(s[1])) {
             name = s + 1;
         } else if (!strncmp(s, "--no-", 5)) {
             name = s + 5;
@@ -366,7 +368,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
                 printf("%s\n", clic_globals.metadata.version);
                 exit(EXIT_SUCCESS);
             } else {
-                // TODO: problem ("parameter not recognised: %s", name)
+                clic_fail("unknown parameter '%s'", name);
             }
         }
     }
@@ -377,7 +379,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
             !arg->is_required)
             continue;
         if (!(s = argv[1 + nb_processed_arguments])) {
-            // TODO: problem ("missing required argument %s", arg->name)
+            clic_fail("missing required argument '%s'", arg->name);
         }
         nb_processed_arguments += clic_parse_param_or_arg(*arg, 1, s, NULL);
     }
@@ -385,7 +387,7 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
     // check if there are unnamed arguments
     if (!active_scope.accept_unnamed_arguments &&
         1 + nb_processed_arguments < argc) {
-        // TODO: problem ("too many arguments")
+        clic_fail("too many arguments");
     }
 
     // cleanup
@@ -447,11 +449,11 @@ static void
 clic_check_name_correctness(const char *name)
 {
     if (!name || !isalpha(*name)) {
-        clic_fail("clic: invalid parameter/argument name");
+        clic_fail("invalid name '%s'", name ? name : "NULL");
     }
     for (const char *c = name; *c; c++) {
         if (!(isalpha(*c) || *c == '-' || *c == '_')) {
-            clic_fail("clic: invalid parameter/argument name");
+            clic_fail("invalid name '%s'", name);
         }
     }
 }
@@ -471,9 +473,11 @@ clic_check_param_or_arg_declaration(int subcommand_id,
         }
     }
     if (should_be_declared && !is_declared) {
-        clic_fail("clic: parameter/argument has not been declared in this scope");
+        clic_fail("parameter/argument '%s' has not been declared in this scope",
+            param_or_arg_name);
     } else if (!should_be_declared && is_declared) {
-        clic_fail("clic: parameter/argument has already been declared in this scope");
+        clic_fail("parameter/argument '%s' has already been declared in this scope",
+            param_or_arg_name);
     }
 }
 
@@ -489,18 +493,20 @@ clic_check_subcommmand_declaration(int subcommand_id,
                     return;
                 }
             }
-            clic_fail("clic: subcommand has not been declared");
+            clic_fail("subcommand identifier %d has not been declared",
+                subcommand_id);
         } else {
             clic_check_name_correctness(subcommand_name);
             clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
-                if (subcommand_id == scope->subcommand_id &&
+                if (subcommand_id == scope->subcommand_id ||
                     !strcmp(subcommand_name, scope->subcommand_name)) {
-                    clic_fail("clic: subcommand has already been declared");
+                    clic_fail("subcommand identifier %d or name '%s' has already been declared",
+                        subcommand_id, subcommand_name);
                 }
             }
         }
     } else if (!should_be_declared) {
-        clic_fail("clic: 0 is already implicitely used as the main scope identifier");
+        clic_fail("0 is already implicitely used as the main scope identifier");
     }
 }
 
@@ -518,13 +524,13 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
     switch (param_or_arg.type) {
     case CLIC_FLAG:
         if (arg1[1] == '-') {
-            // TODO: problem (bad syntax to set flag)
+            clic_fail("bad syntax to set flag '%s'", param_or_arg.name);
         }
         set_flag_bool(*param_or_arg.scalar_variable, 1, param_or_arg.mask);
         return 1;
     case CLIC_BOOL:
         if (strncmp(arg1, "--", 2)) {
-            // TODO: problem (bad syntax to set bool)
+            clic_fail("bad syntax to set bool '%s'", param_or_arg.name);
         }
         set_flag_bool(*param_or_arg.scalar_variable, strncmp(arg1, "--no-", 5),
             param_or_arg.mask);
@@ -533,16 +539,17 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
     case CLIC_INT:
         if (!is_required && (strncmp(arg1, "--", 2) ||
             !strncmp(arg1, "--no-", 5))) {
-            // TODO: problem (bad syntax to set int)
+            clic_fail("bad syntax to set integer '%s'", param_or_arg.name);
         } else if (atoi(s) == 0 && strcmp(s, "0")) {
-            // TODO: problem (expected an integer)
+            clic_fail("expected an integer (%s), got '%s'", param_or_arg.name,
+                s);
         }
         *param_or_arg.scalar_variable = atoi(s);
         return is_required ? 1 : 2;
     case CLIC_STRING:
         if (!is_required && (strncmp(arg1, "--", 2) ||
             !strncmp(arg1, "--no-", 5))) {
-            // TODO: problem (bad syntax to set string)
+            clic_fail("bad syntax to set string '%s'", param_or_arg.name);
         } else if (param_or_arg.restrict_to_declared_options) {
             found = 0;
             clic_list_for(clic_globals.string_options, string_option,
@@ -557,7 +564,8 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
                 break;
             }
             if (!found) {
-                // TODO: problem (not an acceptable value)
+                clic_fail("'%s' is not an acceptable value for %s", s,
+                    param_or_arg.name);
             }
         }
         *param_or_arg.string_variable = s;
@@ -567,9 +575,14 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
 }
 
 static void
-clic_fail(const char *error_message)
+clic_fail(const char *error_message, ...)
 {
-    perror(error_message);
+    va_list ap;
+    fprintf(stderr, "clic: ");
+    va_start(ap, error_message);
+    vfprintf(stderr, error_message, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
     exit(EXIT_FAILURE);
 }
 
