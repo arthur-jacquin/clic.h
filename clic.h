@@ -222,7 +222,9 @@ clic_add_param_flag(int subcommand_id, char name, const char *description,
             .scalar_variable = variable,
             .mask = mask,
         });
-    set_flag_bool(*variable, 0, mask);
+    if (variable) {
+        set_flag_bool(*variable, 0, mask);
+    }
 }
 
 void
@@ -235,7 +237,9 @@ clic_add_param_bool(int subcommand_id, const char *name,
             .scalar_variable = variable,
             .mask = mask,
         });
-    set_flag_bool(*variable, default_value, mask);
+    if (variable) {
+        set_flag_bool(*variable, default_value, mask);
+    }
 }
 
 void
@@ -247,7 +251,9 @@ clic_add_param_int(int subcommand_id, const char *name, const char *description,
             .scalar_default_value = default_value,
             .scalar_variable = variable,
         });
-    *variable = default_value;
+    if (variable) {
+        *variable = default_value;
+    }
 }
 
 void
@@ -261,7 +267,9 @@ clic_add_param_string(int subcommand_id, const char *name,
             .string_variable = variable,
             .restrict_to_declared_options = restrict_to_declared_options,
         });
-    *variable = default_value;
+    if (variable) {
+        *variable = default_value;
+    }
 }
 
 void
@@ -526,14 +534,18 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
         if (arg1[1] == '-') {
             clic_fail("bad syntax to set flag '%s'", param_or_arg.name);
         }
-        set_flag_bool(*param_or_arg.scalar_variable, 1, param_or_arg.mask);
+        if (param_or_arg.scalar_variable) {
+            set_flag_bool(*param_or_arg.scalar_variable, 1, param_or_arg.mask);
+        }
         return 1;
     case CLIC_BOOL:
         if (strncmp(arg1, "--", 2)) {
             clic_fail("bad syntax to set bool '%s'", param_or_arg.name);
         }
-        set_flag_bool(*param_or_arg.scalar_variable, strncmp(arg1, "--no-", 5),
-            param_or_arg.mask);
+        if (param_or_arg.scalar_variable) {
+            set_flag_bool(*param_or_arg.scalar_variable,
+                strncmp(arg1, "--no-", 5), param_or_arg.mask);
+        }
         return 1;
     case CLIC_INT:
     case CLIC_STRING:
@@ -551,7 +563,9 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
                 clic_fail("expected an integer (%s), got '%s'",
                     param_or_arg.name, s);
             }
-            *param_or_arg.scalar_variable = atoi(s);
+            if (param_or_arg.scalar_variable) {
+                *param_or_arg.scalar_variable = atoi(s);
+            }
         } else {
             if (param_or_arg.restrict_to_declared_options) {
                 found = 0;
@@ -571,7 +585,9 @@ clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
                         param_or_arg.name);
                 }
             }
-            *param_or_arg.string_variable = s;
+            if (param_or_arg.string_variable) {
+                *param_or_arg.string_variable = s;
+            }
         }
         return is_required ? 1 : 2;
     }
