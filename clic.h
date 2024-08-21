@@ -1,4 +1,4 @@
-// clic.h - command line interface companion (0.1.0-beta)
+// clic.h - command line interface companion (0.1.0)
 // GPLv3 license - Copyright 2024 Arthur Jacquin <arthur@jacquin.xyz>
 // https://jacquin.xyz/clic
 
@@ -30,13 +30,13 @@
 // rather than in source code.
 
 // Each subcommand must be associated with a non-null integer, while 0 refers to
-// the main program scope. These scope identifiers are used:
+// the main program scope. These subcommand identifiers are used:
 // * to tell for which subcommand (or absence of) a parameter/named argument
 //   is valid/required,
 // * to retrieve which subcommand (or absence of) has been invoked after
 //   `clic_parse` has been called.
 // An enum (with a first `MAIN_SCOPE = 0` constant, explicitely set to 0) is a
-// good way to store scope identifiers.
+// good way to store subcommand identifiers.
 
 // Parameters are of one of the following types, with the corresponding command
 // line syntax:
@@ -54,14 +54,38 @@
 
 // EXAMPLE
 
-// TODO
+// #include <stdio.h>
+// #define CLIC_IMPL
+// #include "clic.h"
+//
+// int
+// main(int argc, char *argv[])
+// {
+//     int verbose;
+//
+//     clic_init("demo", "1.0.0", "GPLv3", "Dumb program showcasing clic.h", 0, 1);
+//     clic_add_param_flag(0, 'v', "increase verbosity", &verbose, 0);
+//     argv += clic_parse(argc, (const char **) argv, NULL);
+//
+//     printf("Verbosity is %s.\n", verbose ? "high" : "low");
+//     printf("Arguments:\n");
+//     for (int i = 1; argv[i]; i++) {
+//         if (verbose) {
+//             printf("%d: ", i);
+//         }
+//         printf("%s\n", argv[i]);
+//     }
+//
+//     return 0;
+// }
 
 
 #ifndef CLIC_H
 #define CLIC_H
 
 void clic_init(const char *program, const char *version, const char *license,
-    const char *description, int accept_unnamed_arguments);
+    const char *description, int require_subcommand,
+    int accept_unnamed_arguments);
 
 void clic_add_subcommand(int subcommand_id, const char *name,
     const char *description, int accept_unnamed_arguments);
@@ -75,14 +99,15 @@ void clic_add_param_int(int subcommand_id, const char *name,
 void clic_add_param_string(int subcommand_id, const char *name,
     const char *description, const char *default_value, const char **variable,
     int restrict_to_declared_options);
+void clic_add_param_string_option(int subcommand_id, const char *param_name,
+    const char *value);
 
 void clic_add_arg_int(int subcommand_id, const char *name,
     const char *description, int *variable);
 void clic_add_arg_string(int subcommand_id, const char *name,
     const char *description, const char **variable,
     int restrict_to_declared_options);
-
-void clic_add_string_option(int subcommand_id, const char *param_or_arg_name,
+void clic_add_arg_string_option(int subcommand_id, const char *arg_name,
     const char *value);
 
 int clic_parse(int argc, const char *argv[], int *subcommand_id);
@@ -111,9 +136,6 @@ int clic_parse(int argc, const char *argv[], int *subcommand_id);
 #define CLIC_PADDING_4          4
 #endif
 
-#define set_flag_bool(curr, val, mask) \
-    ((curr) = (mask) ? ((val) ? ((curr) | (mask)) : ((curr) & ~(mask))) : (val))
-
 struct clic_elem {
     struct clic_elem *next;
 };
@@ -130,75 +152,86 @@ struct clic_flag_name {
     struct clic_flag_name *next;
     char name[2];
 };
-enum clic_type {
-    CLIC_FLAG,
-    CLIC_BOOL,
-    CLIC_INT,
-    CLIC_STRING,
-};
 struct clic_param_or_arg {
     struct clic_param_or_arg *next;
-    // consistent fields (defined for all types)
-    int subcommand_id;
     const char *name, *description;
-    enum clic_type type;
+    enum clic_type {
+        CLIC_FLAG,
+        CLIC_BOOL,
+        CLIC_INT,
+        CLIC_STRING,
+    } type;
     int is_required;
-    // inconsistent fields (defined for some types only)
-    int scalar_default_value, *scalar_variable, mask;
-    const char *string_default_value, **string_variable;
-    int restrict_to_declared_options;
+    union clic_type_specific_data {
+        struct {
+            int scalar_default_value, *scalar_variable, mask;
+        };
+        struct {
+            const char *string_default_value, **string_variable;
+            int restrict_to_declared_options;
+            struct clic_list string_options;
+        };
+    } data;
 };
 struct clic_scope {
     struct clic_scope *next;
     int subcommand_id;
-    const char *subcommand_name, *description;
+    const char *name, *description;
+    struct clic_list params, args;
     int accept_unnamed_arguments;
 };
 struct clic_string_option {
     struct clic_string_option *next;
-    int subcommand_id;
     const char *param_or_arg_name, *value;
 };
 
+static struct clic_elem *clic_add_list_elem(struct clic_list *list,
+    size_t size);
 static void clic_add_param_or_arg(int subcommand_id, const char *name,
     const char *description, enum clic_type type, int is_required,
-    struct clic_param_or_arg inconsistent_data);
-static void clic_add_to_list(struct clic_list *list, struct clic_elem *elem);
+    union clic_type_specific_data data);
+static void clic_add_param_or_arg_string_option(int subcommand_id,
+    int is_required, const char *param_or_arg_name, const char *value);
 static void clic_check_initialized_and_not_parsed(void);
 static void clic_check_name_correctness(const char *name);
-static void clic_check_param_or_arg_declaration(int subcommand_id,
-    const char *param_or_arg_name, int should_be_declared);
-static void clic_check_subcommmand_declaration(int subcommand_id,
+static struct clic_param_or_arg *clic_check_param_or_arg_declaration(
+    struct clic_list list, const char *param_or_arg_name,
+    int should_be_declared);
+static struct clic_scope *clic_check_subcommmand_declaration(int subcommand_id,
     const char *subcommand_name, int should_be_declared);
 static void clic_fail(const char *error_message, ...);
 static int clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg,
-    int is_required, const char *arg1, const char *arg2);
+    const char *arg1, const char *arg2);
 static void clic_print_help(struct clic_scope scope);
 static void clic_print_help_param_or_arg(struct clic_param_or_arg param_or_arg);
 static void clic_print_options(void);
 static void clic_print_synopsis(void);
+static void clic_set_flag_or_bool(int *variable, int value, int mask);
 
 static struct {
     int is_init, is_parsed;
-    struct clic_list flag_names, params_and_args, string_options,
-        subcommand_scopes;
+    struct clic_list flag_names, subcommand_scopes;
     struct clic_metadata {
         const char *version, *license;
+        int require_subcommand;
     } metadata;
     struct clic_scope main_scope;
 } clic_globals;
 
 void
 clic_init(const char *program, const char *version, const char *license,
-    const char *description, int accept_unnamed_arguments)
+    const char *description, int require_subcommand,
+    int accept_unnamed_arguments)
 {
     clic_globals.is_init = 1;
+    clic_globals.is_parsed = 0;
     clic_globals.metadata = (struct clic_metadata) {
         .version = version,
         .license = license,
+        .require_subcommand = require_subcommand,
     };
     clic_globals.main_scope = (struct clic_scope) {
-        .subcommand_name = program,
+        .name = program,
         .description = description,
         .accept_unnamed_arguments = accept_unnamed_arguments,
     };
@@ -211,33 +244,33 @@ clic_add_subcommand(int subcommand_id, const char *name,
     clic_check_initialized_and_not_parsed();
     clic_check_name_correctness(name);
     clic_check_subcommmand_declaration(subcommand_id, name, 0);
-    struct clic_scope *subcommand_scope = malloc(sizeof(*subcommand_scope));
+    struct clic_scope *subcommand_scope = (struct clic_scope *)
+        clic_add_list_elem(&clic_globals.subcommand_scopes,
+            sizeof(*subcommand_scope));
     *subcommand_scope = (struct clic_scope) {
         .subcommand_id = subcommand_id,
-        .subcommand_name = name,
+        .name = name,
         .description = description,
         .accept_unnamed_arguments = accept_unnamed_arguments,
     };
-    clic_add_to_list(&clic_globals.subcommand_scopes,
-        (struct clic_elem *) subcommand_scope);
 }
 
 void
 clic_add_param_flag(int subcommand_id, char name, const char *description,
     int *variable, int mask)
 {
-    struct clic_flag_name *flag_name = malloc(sizeof(*flag_name));
+    struct clic_flag_name *flag_name = (struct clic_flag_name *)
+        clic_add_list_elem(&clic_globals.flag_names, sizeof(*flag_name));
     flag_name->name[0] = name;
     flag_name->name[1] = 0;
-    clic_add_to_list(&clic_globals.flag_names, (struct clic_elem *) flag_name);
     clic_add_param_or_arg(subcommand_id, flag_name->name, description,
-        CLIC_FLAG, 0, (struct clic_param_or_arg) {
+        CLIC_FLAG, 0, (union clic_type_specific_data) {
             .scalar_default_value = 0,
             .scalar_variable = variable,
             .mask = mask,
         });
     if (variable) {
-        set_flag_bool(*variable, 0, mask);
+        clic_set_flag_or_bool(variable, 0, mask);
     }
 }
 
@@ -246,13 +279,13 @@ clic_add_param_bool(int subcommand_id, const char *name,
     const char *description, int default_value, int *variable, int mask)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_BOOL, 0,
-        (struct clic_param_or_arg) {
+        (union clic_type_specific_data) {
             .scalar_default_value = default_value,
             .scalar_variable = variable,
             .mask = mask,
         });
     if (variable) {
-        set_flag_bool(*variable, default_value, mask);
+        clic_set_flag_or_bool(variable, default_value, mask);
     }
 }
 
@@ -261,7 +294,7 @@ clic_add_param_int(int subcommand_id, const char *name, const char *description,
     int default_value, int *variable)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_INT, 0,
-        (struct clic_param_or_arg) {
+        (union clic_type_specific_data) {
             .scalar_default_value = default_value,
             .scalar_variable = variable,
         });
@@ -276,7 +309,7 @@ clic_add_param_string(int subcommand_id, const char *name,
     int restrict_to_declared_options)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_STRING, 0,
-        (struct clic_param_or_arg) {
+        (union clic_type_specific_data) {
             .string_default_value = default_value,
             .string_variable = variable,
             .restrict_to_declared_options = restrict_to_declared_options,
@@ -287,11 +320,18 @@ clic_add_param_string(int subcommand_id, const char *name,
 }
 
 void
+clic_add_param_string_option(int subcommand_id, const char *param_name,
+    const char *value)
+{
+    clic_add_param_or_arg_string_option(subcommand_id, 0, param_name, value);
+}
+
+void
 clic_add_arg_int(int subcommand_id, const char *name, const char *description,
     int *variable)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_INT, 1,
-        (struct clic_param_or_arg) {
+        (union clic_type_specific_data) {
             .scalar_variable = variable,
         });
 }
@@ -302,28 +342,17 @@ clic_add_arg_string(int subcommand_id, const char *name,
     int restrict_to_declared_options)
 {
     clic_add_param_or_arg(subcommand_id, name, description, CLIC_STRING, 1,
-        (struct clic_param_or_arg) {
+        (union clic_type_specific_data) {
             .string_variable = variable,
             .restrict_to_declared_options = restrict_to_declared_options,
         });
 }
 
 void
-clic_add_string_option(int subcommand_id, const char *param_or_arg_name,
+clic_add_arg_string_option(int subcommand_id, const char *arg_name,
     const char *value)
 {
-    clic_check_initialized_and_not_parsed();
-    clic_check_name_correctness(param_or_arg_name);
-    clic_check_subcommmand_declaration(subcommand_id, NULL, 1);
-    clic_check_param_or_arg_declaration(subcommand_id, param_or_arg_name, 1);
-    struct clic_string_option *string_option = malloc(sizeof(*string_option));
-    *string_option = (struct clic_string_option) {
-        .subcommand_id = subcommand_id,
-        .param_or_arg_name = param_or_arg_name,
-        .value = value,
-    };
-    clic_add_to_list(&clic_globals.string_options,
-        (struct clic_elem *) string_option);
+    clic_add_param_or_arg_string_option(subcommand_id, 1, arg_name, value);
 }
 
 int
@@ -332,9 +361,10 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
     int nb_processed_arguments = 0;
 
     clic_check_initialized_and_not_parsed();
+    clic_globals.is_init = 0;
     clic_globals.is_parsed = 1;
-    if (!clic_globals.main_scope.subcommand_name) {
-        clic_globals.main_scope.subcommand_name = argv[0];
+    if (!clic_globals.main_scope.name) {
+        clic_globals.main_scope.name = argv[0];
     }
 
 #if defined(CLIC_DUMP_SYNOPSIS)
@@ -349,14 +379,24 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
     // detect subcommand
     if (argc > 1) {
         clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
-            if (strcmp(argv[1], scope->subcommand_name))
+            if (strcmp(argv[1], scope->name))
                 continue;
             active_scope = *scope;
             nb_processed_arguments++;
             break;
         }
     }
-    *subcommand_id = active_scope.subcommand_id;
+    if (!active_scope.subcommand_id &&
+        clic_globals.metadata.require_subcommand) {
+        if (argc > 1 && !strcmp(argv[1], "--help")) {
+            clic_print_help(clic_globals.main_scope);
+        } else {
+            clic_fail("subcommand not found");
+        }
+    }
+    if (subcommand_id) {
+        *subcommand_id = active_scope.subcommand_id;
+    }
 
     // eat parameters
     while ((s = argv[1 + nb_processed_arguments])) {
@@ -375,11 +415,10 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
             break;
         }
         found = 0;
-        clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
-            if (active_scope.subcommand_id != param->subcommand_id ||
-                strcmp(name, param->name))
+        clic_list_for(active_scope.params, param, clic_param_or_arg) {
+            if (strcmp(name, param->name))
                 continue;
-            nb_processed_arguments += clic_parse_param_or_arg(*param, 0, s,
+            nb_processed_arguments += clic_parse_param_or_arg(*param, s,
                 argv[1 + nb_processed_arguments + 1]);
             found = 1;
             break;
@@ -399,14 +438,11 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
     }
 
     // eat named arguments
-    clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
-        if (active_scope.subcommand_id != arg->subcommand_id ||
-            !arg->is_required)
-            continue;
+    clic_list_for(active_scope.args, arg, clic_param_or_arg) {
         if (!(s = argv[1 + nb_processed_arguments])) {
             clic_fail("missing required argument '%s'", arg->name);
         }
-        nb_processed_arguments += clic_parse_param_or_arg(*arg, 1, s, NULL);
+        nb_processed_arguments += clic_parse_param_or_arg(*arg, s, NULL);
     }
 
     // check if there are unnamed arguments
@@ -416,48 +452,90 @@ clic_parse(int argc, const char *argv[], int *subcommand_id)
     }
 
     // cleanup
-    clic_list_safe_for(clic_globals.flag_names, p, clic_flag_name)
-        free(p);
-    clic_list_safe_for(clic_globals.params_and_args, p, clic_param_or_arg)
-        free(p);
-    clic_list_safe_for(clic_globals.string_options, p, clic_string_option)
-        free(p);
-    clic_list_safe_for(clic_globals.subcommand_scopes, p, clic_scope)
-        free(p);
+    clic_list_safe_for(clic_globals.flag_names, flag_name, clic_flag_name) {
+        free(flag_name);
+    }
+    clic_list_safe_for(clic_globals.subcommand_scopes, scope, clic_scope) {
+        clic_list_safe_for(scope->params, param_or_arg, clic_param_or_arg) {
+            clic_list_safe_for(param_or_arg->data.string_options, string_option,
+                clic_string_option) {
+                free(string_option);
+            }
+            free(param_or_arg);
+        }
+        clic_list_safe_for(scope->args, param_or_arg, clic_param_or_arg) {
+            clic_list_safe_for(param_or_arg->data.string_options, string_option,
+                clic_string_option) {
+                free(string_option);
+            }
+            free(param_or_arg);
+        }
+        free(scope);
+    }
 #endif // CLIC_DUMP_*
 
     return nb_processed_arguments;
 }
 
-static void
-clic_add_param_or_arg(int subcommand_id, const char *name,
-    const char *description, enum clic_type type, int is_required,
-    struct clic_param_or_arg inconsistent_data)
+static struct clic_elem *
+clic_add_list_elem(struct clic_list *list, size_t size)
 {
-    clic_check_initialized_and_not_parsed();
-    clic_check_name_correctness(name);
-    clic_check_subcommmand_declaration(subcommand_id, NULL, 1);
-    clic_check_param_or_arg_declaration(subcommand_id, name, 0);
-    struct clic_param_or_arg *param_or_arg = malloc(sizeof(*param_or_arg));
-    *param_or_arg = inconsistent_data;
-    param_or_arg->subcommand_id = subcommand_id;
-    param_or_arg->name = name;
-    param_or_arg->description = description;
-    param_or_arg->type = type;
-    param_or_arg->is_required = is_required;
-    clic_add_to_list(&clic_globals.params_and_args,
-        (struct clic_elem *) param_or_arg);
+    struct clic_elem *res = malloc(size);
+    if (list->start) {
+        list->end->next = res;
+    } else {
+        list->start = res;
+    }
+    list->end = res;
+    return res;
 }
 
 static void
-clic_add_to_list(struct clic_list *list, struct clic_elem *elem)
+clic_add_param_or_arg(int subcommand_id, const char *name,
+    const char *description, enum clic_type type, int is_required,
+    union clic_type_specific_data data)
 {
-    if (list->start) {
-        list->end->next = elem;
-    } else {
-        list->start = elem;
+    clic_check_initialized_and_not_parsed();
+    clic_check_name_correctness(name);
+    struct clic_scope *scope = clic_check_subcommmand_declaration(subcommand_id,
+        NULL, 1);
+    struct clic_list *list = is_required ? &scope->args : &scope->params;
+    clic_check_param_or_arg_declaration(*list, name, 0);
+    struct clic_param_or_arg *param_or_arg = (struct clic_param_or_arg *)
+        clic_add_list_elem(list, sizeof(*param_or_arg));
+    *param_or_arg = (struct clic_param_or_arg) {
+        .name = name,
+        .description = description,
+        .type = type,
+        .is_required = is_required,
+        .data = data,
+    };
+}
+
+static void
+clic_add_param_or_arg_string_option(int subcommand_id, int is_required,
+    const char *param_or_arg_name, const char *value)
+{
+    clic_check_initialized_and_not_parsed();
+    clic_check_name_correctness(param_or_arg_name);
+    struct clic_scope *scope = clic_check_subcommmand_declaration(subcommand_id,
+        NULL, 1);
+    struct clic_list *list = is_required ? &scope->args : &scope->params;
+    struct clic_param_or_arg *param_or_arg =
+        clic_check_param_or_arg_declaration(*list, param_or_arg_name, 1);
+    if (param_or_arg->type != CLIC_STRING ||
+        !param_or_arg->data.restrict_to_declared_options) {
+        clic_fail("parameter or argument '%s' is not a restricted-input string, "
+            "cannot declare an option '%s' for it",
+            param_or_arg_name, value);
     }
-    list->end = elem;
+    struct clic_string_option *string_option = (struct clic_string_option *)
+        clic_add_list_elem(&param_or_arg->data.string_options,
+            sizeof(*string_option));
+    *string_option = (struct clic_string_option) {
+        .param_or_arg_name = param_or_arg_name,
+        .value = value,
+    };
 }
 
 static void
@@ -483,39 +561,40 @@ clic_check_name_correctness(const char *name)
     }
 }
 
-static void
-clic_check_param_or_arg_declaration(int subcommand_id,
+static struct clic_param_or_arg *
+clic_check_param_or_arg_declaration(struct clic_list list,
     const char *param_or_arg_name, int should_be_declared)
 {
+    // if should_be_declared, return pointer
+    // else, return NULL
     clic_check_name_correctness(param_or_arg_name);
-    int is_declared = 0;
-    clic_list_for(clic_globals.params_and_args, param_or_arg,
-        clic_param_or_arg) {
-        if (subcommand_id == param_or_arg->subcommand_id &&
-            !strcmp(param_or_arg_name, param_or_arg->name)) {
-            is_declared = 1;
-            break;
+    clic_list_for(list, param_or_arg, clic_param_or_arg) {
+        if (!strcmp(param_or_arg_name, param_or_arg->name)) {
+            if (!should_be_declared) {
+                clic_fail("parameter/argument '%s' has already been declared in this scope",
+                    param_or_arg_name);
+            }
+            return param_or_arg;
         }
     }
-    if (should_be_declared && !is_declared) {
+    if (should_be_declared) {
         clic_fail("parameter/argument '%s' has not been declared in this scope",
             param_or_arg_name);
-    } else if (!should_be_declared && is_declared) {
-        clic_fail("parameter/argument '%s' has already been declared in this scope",
-            param_or_arg_name);
     }
+    return NULL;
 }
 
-static void
+static struct clic_scope *
 clic_check_subcommmand_declaration(int subcommand_id,
     const char *subcommand_name, int should_be_declared)
 {
-    // if should_be_declared, only subcommand_id is checked
+    // if should_be_declared, only subcommand_id is checked, return pointer
+    // else, return NULL
     if (subcommand_id) {
         if (should_be_declared) {
             clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
                 if (subcommand_id == scope->subcommand_id) {
-                    return;
+                    return scope;
                 }
             }
             clic_fail("subcommand identifier %d has not been declared",
@@ -524,91 +603,20 @@ clic_check_subcommmand_declaration(int subcommand_id,
             clic_check_name_correctness(subcommand_name);
             clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
                 if (subcommand_id == scope->subcommand_id ||
-                    !strcmp(subcommand_name, scope->subcommand_name)) {
+                    !strcmp(subcommand_name, scope->name)) {
                     clic_fail("subcommand identifier %d or name '%s' has already been declared",
                         subcommand_id, subcommand_name);
                 }
             }
         }
-    } else if (!should_be_declared) {
-        clic_fail("0 is already implicitely used as the main scope identifier");
-    }
-}
-
-static int
-clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, int is_required,
-    const char *arg1, const char *arg2)
-{
-    // arg1 and arg2 are command line arguments
-    // returns the number of them used to parse param_or_arg
-    // check type correctness, value correctness, store in variable
-
-    const char *s = is_required ? arg1 : arg2;
-    int found;
-
-    switch (param_or_arg.type) {
-    case CLIC_FLAG:
-        if (arg1[1] == '-') {
-            clic_fail("bad syntax to set flag '%s'", param_or_arg.name);
-        }
-        if (param_or_arg.scalar_variable) {
-            set_flag_bool(*param_or_arg.scalar_variable, 1, param_or_arg.mask);
-        }
-        return 1;
-    case CLIC_BOOL:
-        if (strncmp(arg1, "--", 2)) {
-            clic_fail("bad syntax to set bool '%s'", param_or_arg.name);
-        }
-        if (param_or_arg.scalar_variable) {
-            set_flag_bool(*param_or_arg.scalar_variable,
-                strncmp(arg1, "--no-", 5), param_or_arg.mask);
-        }
-        return 1;
-    case CLIC_INT:
-    case CLIC_STRING:
-        if (!is_required && !arg2) {
-            clic_fail("missing required value for parameter '%s'",
-                param_or_arg.name);
-        } else if (!is_required && (strncmp(arg1, "--", 2) ||
-            !strncmp(arg1, "--no-", 5))) {
-            clic_fail("bad syntax to set %s '%s'",
-                param_or_arg.type == CLIC_INT ? "integer" : "string",
-                param_or_arg.name);
-        }
-        if (param_or_arg.type == CLIC_INT) {
-            if (atoi(s) == 0 && strcmp(s, "0")) {
-                clic_fail("expected an integer (%s), got '%s'",
-                    param_or_arg.name, s);
-            }
-            if (param_or_arg.scalar_variable) {
-                *param_or_arg.scalar_variable = atoi(s);
-            }
+    } else {
+        if (should_be_declared) {
+            return &clic_globals.main_scope;
         } else {
-            if (param_or_arg.restrict_to_declared_options) {
-                found = 0;
-                clic_list_for(clic_globals.string_options, string_option,
-                    clic_string_option) {
-                    if (param_or_arg.subcommand_id !=
-                            string_option->subcommand_id ||
-                        strcmp(param_or_arg.name,
-                            string_option->param_or_arg_name) ||
-                        strcmp(s, string_option->value))
-                        continue;
-                    found = 1;
-                    break;
-                }
-                if (!found) {
-                    clic_fail("'%s' is not an acceptable value for %s", s,
-                        param_or_arg.name);
-                }
-            }
-            if (param_or_arg.string_variable) {
-                *param_or_arg.string_variable = s;
-            }
+            clic_fail("0 is already implicitely used as the main scope identifier");
         }
-        return is_required ? 1 : 2;
     }
-    return 0;
+    return NULL;
 }
 
 static void
@@ -623,69 +631,129 @@ clic_fail(const char *error_message, ...)
     exit(EXIT_FAILURE);
 }
 
+static int
+clic_parse_param_or_arg(struct clic_param_or_arg param_or_arg, const char *arg1,
+    const char *arg2)
+{
+    // arg1 and arg2 are command line arguments
+    // returns the number of them used to parse param_or_arg
+    // check type correctness, value correctness, store in variable
+
+    const char *s = param_or_arg.is_required ? arg1 : arg2;
+    int found;
+
+    switch (param_or_arg.type) {
+    case CLIC_FLAG:
+        if (arg1[1] == '-') {
+            clic_fail("bad syntax to set flag '%s'", param_or_arg.name);
+        }
+        if (param_or_arg.data.scalar_variable) {
+            clic_set_flag_or_bool(param_or_arg.data.scalar_variable, 1,
+                param_or_arg.data.mask);
+        }
+        return 1;
+    case CLIC_BOOL:
+        if (strncmp(arg1, "--", 2)) {
+            clic_fail("bad syntax to set bool '%s'", param_or_arg.name);
+        }
+        if (param_or_arg.data.scalar_variable) {
+            clic_set_flag_or_bool(param_or_arg.data.scalar_variable,
+                strncmp(arg1, "--no-", 5), param_or_arg.data.mask);
+        }
+        return 1;
+    case CLIC_INT:
+    case CLIC_STRING:
+        if (!param_or_arg.is_required && !arg2) {
+            clic_fail("missing required value for parameter '%s'",
+                param_or_arg.name);
+        } else if (!param_or_arg.is_required && (strncmp(arg1, "--", 2) ||
+            !strncmp(arg1, "--no-", 5))) {
+            clic_fail("bad syntax to set %s '%s'",
+                param_or_arg.type == CLIC_INT ? "integer" : "string",
+                param_or_arg.name);
+        }
+        if (param_or_arg.type == CLIC_INT) {
+            if (atoi(s) == 0 && strcmp(s, "0")) {
+                clic_fail("expected an integer (%s), got '%s'",
+                    param_or_arg.name, s);
+            }
+            if (param_or_arg.data.scalar_variable) {
+                *param_or_arg.data.scalar_variable = atoi(s);
+            }
+        } else {
+            if (param_or_arg.data.restrict_to_declared_options) {
+                found = 0;
+                clic_list_for(param_or_arg.data.string_options, string_option,
+                    clic_string_option) {
+                    if (strcmp(s, string_option->value))
+                        continue;
+                    found = 1;
+                    break;
+                }
+                if (!found) {
+                    clic_fail("'%s' is not an acceptable value for %s", s,
+                        param_or_arg.name);
+                }
+            }
+            if (param_or_arg.data.string_variable) {
+                *param_or_arg.data.string_variable = s;
+            }
+        }
+        return param_or_arg.is_required ? 1 : 2;
+    }
+    return 0;
+}
+
 static void
 clic_print_help(struct clic_scope scope)
 {
     const char *program_name, *s;
-    int arg_found = 0, param_found = 0;
 
     // metadata
-    printf("%s", program_name = clic_globals.main_scope.subcommand_name);
+    printf("%s", program_name = clic_globals.main_scope.name);
     if ((s = clic_globals.metadata.version)) printf(" %s", s);
     if ((s = clic_globals.metadata.license)) printf(" (license: %s)", s);
     printf("\n");
     if ((s = clic_globals.main_scope.description)) printf("%s\n", s);
 
-    // usage
+    // usage, subcommands
     printf("\nUSAGE\n");
-    printf("%*s%s", CLIC_PADDING_1, "", program_name);
-    if (scope.subcommand_id) printf(" %s", scope.subcommand_name);
-    clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
-        if (scope.subcommand_id != param->subcommand_id || param->is_required)
-            continue;
-        param_found = 1;
-        printf(" [OPTIONS]");
-        break;
+    if (scope.subcommand_id || !clic_globals.metadata.require_subcommand) {
+        printf("%*s%s", CLIC_PADDING_1, "", program_name);
+        if (scope.subcommand_id) printf(" %s", scope.name);
+        if (scope.params.start) printf(" [OPTIONS]");
+        clic_list_for(scope.args, arg, clic_param_or_arg) {
+            printf(" %s", arg->name);
+        }
+        if (scope.accept_unnamed_arguments) printf(" [ARGUMENTS]");
+        printf("\n");
     }
-    clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
-        if (scope.subcommand_id != arg->subcommand_id || !arg->is_required)
-            continue;
-        arg_found = 1;
-        printf(" %s", arg->name);
-    }
-    if (scope.accept_unnamed_arguments) printf(" [ARGUMENTS]");
-    printf("\n");
-
-    // subcommands, named arguments, parameters
     if (!scope.subcommand_id && clic_globals.subcommand_scopes.start) {
         printf("%*s%s SUBCOMMAND ... (see %s SUBCOMMAND --help)\n",
             CLIC_PADDING_1, "", program_name, program_name);
         printf("\nSUBCOMMANDS\n");
-        clic_list_for(clic_globals.subcommand_scopes, scope, clic_scope) {
+        clic_list_for(clic_globals.subcommand_scopes, subcommand, clic_scope) {
             printf("%*s%-*s", CLIC_PADDING_1, "", CLIC_PADDING_2,
-                s = scope->subcommand_name);
-            if (scope->description) {
+                s = subcommand->name);
+            if (subcommand->description) {
                 if (strlen(s) >= CLIC_PADDING_2)
                     printf("\n%*s", CLIC_PADDING_1 + CLIC_PADDING_2, "");
-                printf("%s", scope->description);
+                printf("%s", subcommand->description);
             }
             printf("\n");
         }
     }
-    if (arg_found) {
+
+    // named arguments, parameters
+    if (scope.args.start) {
         printf("\nNAMED ARGUMENTS\n");
-        clic_list_for(clic_globals.params_and_args, arg, clic_param_or_arg) {
-            if (scope.subcommand_id != arg->subcommand_id || !arg->is_required)
-                continue;
+        clic_list_for(scope.args, arg, clic_param_or_arg) {
             clic_print_help_param_or_arg(*arg);
         }
     }
-    if (param_found) {
+    if (scope.params.start) {
         printf("\nOPTIONS\n");
-        clic_list_for(clic_globals.params_and_args, param, clic_param_or_arg) {
-            if (scope.subcommand_id != param->subcommand_id ||
-                param->is_required)
-            continue;
+        clic_list_for(scope.params, param, clic_param_or_arg) {
             clic_print_help_param_or_arg(*param);
         }
     }
@@ -732,14 +800,11 @@ clic_print_help_param_or_arg(struct clic_param_or_arg param_or_arg)
     printf("\n");
 
     // acceptable and default values
-    if (type == CLIC_STRING && param_or_arg.restrict_to_declared_options) {
+    if (type == CLIC_STRING && param_or_arg.data.restrict_to_declared_options) {
         printf("%*soptions: ", CLIC_PADDING_1 + CLIC_PADDING_4, "");
         nb = 0;
-        clic_list_for(clic_globals.string_options, string_option,
+        clic_list_for(param_or_arg.data.string_options, string_option,
             clic_string_option) {
-            if (param_or_arg.subcommand_id != string_option->subcommand_id ||
-                strcmp(param_or_arg.name, string_option->param_or_arg_name))
-                continue;
             printf("%s%s", nb ? ", ": "", string_option->value);
             nb++;
         }
@@ -751,14 +816,15 @@ clic_print_help_param_or_arg(struct clic_param_or_arg param_or_arg)
         case CLIC_FLAG: // unreachable
             break;
         case CLIC_BOOL:
-            printf("--%s%s", param_or_arg.scalar_default_value ? "" : "no-",
+            printf("--%s%s",
+                param_or_arg.data.scalar_default_value ? "" : "no-",
                 param_or_arg.name);
             break;
         case CLIC_INT:
-            printf("%d", param_or_arg.scalar_default_value);
+            printf("%d", param_or_arg.data.scalar_default_value);
             break;
         case CLIC_STRING:
-            printf("%s", param_or_arg.string_default_value);
+            printf("%s", param_or_arg.data.string_default_value);
             break;
         }
         printf("\n");
@@ -769,6 +835,7 @@ static void
 clic_print_options(void)
 {
     // TODO
+    clic_fail("printing manual sections is unsupported yet");
     exit(EXIT_SUCCESS);
 }
 
@@ -776,7 +843,22 @@ static void
 clic_print_synopsis(void)
 {
     // TODO
+    clic_fail("printing manual sections is unsupported yet");
     exit(EXIT_SUCCESS);
+}
+
+static void
+clic_set_flag_or_bool(int *variable, int value, int mask)
+{
+    if (mask) {
+        if (value) {
+            *variable |= mask;
+        } else {
+            *variable &= ~mask;
+        }
+    } else {
+        *variable = value;
+    };
 }
 
 #endif // CLIC_IMPL
